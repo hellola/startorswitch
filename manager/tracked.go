@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"errors"
 	"log"
 
 	"github.com/hellola/startorswitch/wm"
@@ -49,7 +50,7 @@ func (t *Tracked) SetupTracking() error {
 	log.Printf("Setting up tracking for window %s", t.Name)
 	if t.Type == TypeApplication && t.IsTracked() && !t.WM.StillAlive(t.ID()) {
 		log.Printf("Application window %s is no longer alive, destroying", t.Name)
-		return t.Destroy()
+		t.Destroy()
 	}
 	if t.IsTracked() {
 		log.Printf("Window %s is already tracked", t.Name)
@@ -149,6 +150,10 @@ func (t *Tracked) ShowOrHide() error {
 	log.Printf("Previous window ID: %s", previous)
 
 	switch t.State() {
+	case Errored:
+		log.Printf("Window %s is errored: ", t.Name)
+		t.StateMgr.SetState(t.Name, Visible)
+		return errors.New("Window is errored")
 	case Visible:
 		log.Printf("Window %s is visible, hiding", t.Name)
 		if t.SwitchTo && !t.IsFocused() {
@@ -159,8 +164,8 @@ func (t *Tracked) ShowOrHide() error {
 			log.Printf("Error hiding window %s: %v", t.Name, err)
 			return err
 		}
-		log.Printf("Focusing previous window %s", previous)
-		return t.WM.Focus(previous)
+		// log.Printf("Focusing previous window %s", previous)
+		// return t.WM.Focus(previous)
 	case NotVisible:
 		log.Printf("Window %s is not visible, showing", t.Name)
 		if err := t.StateMgr.StorePrevID(t.WM.GetFocusedID()); err != nil {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -20,15 +21,14 @@ func NewI3Integration() *I3Integration {
 
 func (w *I3Integration) Show(nodeID string) error {
 	log.Printf("Showing i3 window with ID: %s", nodeID)
-	log.Printf("Executing i3 command: i3-msg scratchpad show [id=%s]", nodeID)
-	return exec.Command("i3-msg", "scratchpad", "show", fmt.Sprintf("[id=%s]", nodeID)).Run()
+	log.Printf("Executing i3 command: i3-msg [con_id=%s] scratchpad show", nodeID)
+	return exec.Command("i3-msg", fmt.Sprintf("[con_id=%s]", nodeID), "scratchpad", "show").Run()
 }
 
 func (w *I3Integration) Hide(nodeID string) error {
 	log.Printf("Hiding i3 window with ID: %s", nodeID)
-	cmd := fmt.Sprintf("windowunmap %s", nodeID)
-	log.Printf("Executing i3 command: %s", cmd)
-	return exec.Command("i3-msg", "move", "scratchpad", fmt.Sprintf("[id=%s]", nodeID)).Run()
+	log.Printf("Executing i3 command: i3-msg [con_id=%s] move scratchpad ", nodeID)
+	return exec.Command("i3-msg", fmt.Sprintf("[con_id=%s]", nodeID), "move", "scratchpad").Run()
 	// execCmd.Env = os.Environ()
 	// execCmd.Env = append(execCmd.Env, "DISPLAY=:0")
 	// output, err := execCmd.Run()
@@ -55,8 +55,9 @@ func (w *I3Integration) StillAlive(nodeID string) bool {
 }
 
 func (w *I3Integration) findNodeInTree(node map[string]interface{}, nodeID string) bool {
-	if id, ok := node["id"].(int); ok {
-		currentID := fmt.Sprintf("%d", int(id))
+	if id, ok := node["id"].(float64); ok {
+		currentID := strconv.FormatFloat(id, 'f', -1, 64)
+		log.Printf("checking node current: %s, id: %s", currentID, nodeID)
 		if currentID == nodeID {
 			log.Printf("Found matching node ID in tree: %s", currentID)
 			return true
@@ -64,6 +65,15 @@ func (w *I3Integration) findNodeInTree(node map[string]interface{}, nodeID strin
 	}
 
 	if nodes, ok := node["nodes"].([]interface{}); ok {
+		for _, n := range nodes {
+			if nodeMap, ok := n.(map[string]interface{}); ok {
+				if w.findNodeInTree(nodeMap, nodeID) {
+					return true
+				}
+			}
+		}
+	}
+	if nodes, ok := node["floating_nodes"].([]interface{}); ok {
 		for _, n := range nodes {
 			if nodeMap, ok := n.(map[string]interface{}); ok {
 				if w.findNodeInTree(nodeMap, nodeID) {
@@ -127,6 +137,50 @@ func (w *I3Integration) findFocusedNode(node map[string]interface{}) string {
 			}
 		}
 	}
+	if nodes, ok := node["floating_nodes"].([]interface{}); ok {
+		for _, n := range nodes {
+			if nodeMap, ok := n.(map[string]interface{}); ok {
+				if id := w.findFocusedNode(nodeMap); id != "" {
+					return id
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+func (w *I3Integration) findNodeIDByWindowID(node map[string]interface{}, windowID string) string {
+	if id, ok := node["id"].(float64); ok {
+		if window, ok := node["window"].(float64); ok {
+			currentWindowID := strconv.FormatFloat(window, 'f', -1, 64)
+
+			// log.Printf("--- s: %s w: %s id: %f", windowID, currentWindowID, id)
+			if currentWindowID == windowID {
+				return strconv.FormatFloat(id, 'f', -1, 64)
+			}
+		}
+	}
+
+	if nodes, ok := node["nodes"].([]interface{}); ok {
+		for _, n := range nodes {
+			if nodeMap, ok := n.(map[string]interface{}); ok {
+				if id := w.findNodeIDByWindowID(nodeMap, windowID); id != "" {
+					return id
+				}
+			}
+		}
+	}
+
+	if nodes, ok := node["floating_nodes"].([]interface{}); ok {
+		for _, n := range nodes {
+			if nodeMap, ok := n.(map[string]interface{}); ok {
+				if id := w.findNodeIDByWindowID(nodeMap, windowID); id != "" {
+					return id
+				}
+			}
+		}
+	}
 
 	return ""
 }
@@ -140,8 +194,26 @@ func (w *I3Integration) FindOrStartApplication(name string) (string, error) {
 	if err == nil && len(output) > 0 {
 		ids := strings.Split(strings.TrimSpace(string(output)), "\n")
 		if len(ids) > 0 {
-			log.Printf("Found existing window for %s with ID: %s", name, ids[0])
-			return ids[0], nil
+			windowID := ids[0]
+			// Get i3 tree to find corresponding node ID
+			i3Cmd := exec.Command("i3-msg", "-t", "get_tree")
+			i3Output, err := i3Cmd.Output()
+			if err != nil {
+				log.Printf("Error getting i3 tree: %v", err)
+				return "", err
+			}
+
+			var tree map[string]interface{}
+			if err := json.Unmarshal(i3Output, &tree); err != nil {
+				log.Printf("Error unmarshaling i3 tree: %v", err)
+				return "", err
+			}
+
+			nodeID := w.findNodeIDByWindowID(tree, windowID)
+			if nodeID != "" {
+				log.Printf("Found existing window for %s with i3 node ID: %s", name, nodeID)
+				return nodeID, nil
+			}
 		}
 	}
 
@@ -155,17 +227,39 @@ func (w *I3Integration) FindOrStartApplication(name string) (string, error) {
 
 	// Wait for window to appear
 	log.Printf("Waiting for window to appear...")
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 10; i++ {
 		cmd := exec.Command("xdotool", "search", "--name", name)
 		output, err := cmd.Output()
 		if err == nil && len(output) > 0 {
 			ids := strings.Split(strings.TrimSpace(string(output)), "\n")
 			if len(ids) > 0 {
-				log.Printf("Found window after starting %s with ID: %s", name, ids[0])
-				return ids[0], nil
+
+				i3Cmd := exec.Command("i3-msg", "-t", "get_tree")
+				i3Output, err := i3Cmd.Output()
+				if err != nil {
+					log.Printf("Error getting i3 tree: %v", err)
+					continue
+				}
+
+				var tree map[string]interface{}
+				if err := json.Unmarshal(i3Output, &tree); err != nil {
+					log.Printf("Error unmarshaling i3 tree: %v", err)
+					continue
+				}
+
+				for _, windowID := range ids {
+
+					log.Printf("looking for node with window id: %s", windowID)
+					// Get i3 tree to find corresponding node ID
+					nodeID := w.findNodeIDByWindowID(tree, windowID)
+					if nodeID != "" {
+						log.Printf("Found window after starting %s with i3 node ID: %s", name, nodeID)
+						return nodeID, nil
+					}
+				}
 			}
 		}
-		log.Printf("Attempt %d/5: Window not found yet, waiting...", i+1)
+		log.Printf("Attempt %d/10: Window not found yet, waiting...", i+1)
 		time.Sleep(time.Second)
 	}
 
