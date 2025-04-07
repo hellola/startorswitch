@@ -9,6 +9,13 @@ import (
 	"github.com/hellola/startorswitch/wm"
 )
 
+// Command represents a command to be executed by the manager
+type Command struct {
+	Mode    string
+	Name    string
+	Options map[string]string
+}
+
 // Manager handles the main application logic
 type Manager struct {
 	StateMgr StateManagement
@@ -30,54 +37,45 @@ func NewManager(cfg *config.Config, wmIntegration wm.WMIntegration) (*Manager, e
 	}, nil
 }
 
-// Go processes the command line arguments
-func (m *Manager) Go(args []string) error {
-	if len(args) == 0 {
-		return fmt.Errorf("need a name")
-	}
-
-	if len(args) == 1 && args[0] == "r" {
+// Go processes the command
+func (m *Manager) Go(cmd Command) error {
+	if cmd.Mode == "r" || cmd.Mode == "reset" {
 		return m.StateMgr.ResetAll()
 	}
 
 	var windowType WindowType
-	var name string
-	var options []string
 	var switchTo bool
 
-	switch args[0] {
-	case "f":
+	switch cmd.Mode {
+	case "f", "focus":
 		windowType = TypeFocused
-	case "a":
+	case "a", "application":
 		windowType = TypeApplication
-	case "c":
+	case "c", "clean":
 		windowType = TypeClean
-	case "h":
+	case "h", "hide":
 		windowType = TypeHide
 		return m.HideTrackedFocused()
-	case "hl":
+	case "hl", "hide-latest":
 		windowType = TypeHideLatest
 		return m.HideOrShowLatest()
-	case "ha":
+	case "ha", "hide-all":
 		windowType = TypeHideAll
 		return m.HideAllTracked()
-	case "s":
+	case "s", "show-all":
 		windowType = TypeShowAll
 		return m.ShowAllHidden()
 	default:
-		return fmt.Errorf("unknown command: %s", args[0])
+		return fmt.Errorf("unknown command: %s", cmd.Mode)
 	}
 
-	fmt.Println("command args, windowType:", windowType)
-
-	if len(args) > 1 {
-		name = args[1]
-		options = args[2:]
-		switchTo = strings.Contains(strings.Join(options, " "), "switch_to")
+	if cmd.Mode != "ha" && cmd.Mode != "s" && cmd.Name == "" {
+		return fmt.Errorf("name is required for mode: %s", cmd.Mode)
 	}
 
-	tracked := NewTracked(name, windowType, switchTo, m.StateMgr, m.WM)
-	fmt.Println("tracked!: ", tracked.Name, "options: ", options)
+	switchTo = cmd.Options["switch_to"] == "true"
+
+	tracked := NewTracked(cmd.Name, windowType, switchTo, m.StateMgr, m.WM)
 
 	if windowType == TypeClean {
 		return tracked.Destroy()
@@ -87,25 +85,16 @@ func (m *Manager) Go(args []string) error {
 		return err
 	}
 
-	fmt.Println("show or hide..")
 	if err := tracked.ShowOrHide(); err != nil {
 		return err
 	}
 
-	return m.HandleOptions(tracked.State(), tracked.ID(), options)
+	return m.HandleOptions(tracked.State(), tracked.ID(), cmd.Options)
 }
 
-// HandleOptions processes command line options
-func (m *Manager) HandleOptions(state WindowState, nodeID string, options []string) error {
-	for _, opt := range options {
-		fmt.Println("handling options,", opt)
-		parts := strings.Split(opt, "=")
-		if len(parts) != 2 {
-			continue
-		}
-
-		key, value := parts[0], parts[1]
-
+// HandleOptions processes command options
+func (m *Manager) HandleOptions(state WindowState, nodeID string, options map[string]string) error {
+	for key, value := range options {
 		switch key {
 		case "top_padding":
 			cmd := "bspc config -m HDMI-1-1 top_padding "

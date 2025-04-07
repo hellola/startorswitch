@@ -2,7 +2,7 @@ package manager
 
 import (
 	"context"
-	"fmt"
+	"log"
 	"strconv"
 	"time"
 
@@ -51,7 +51,7 @@ func (s *RedisStateManagement) DestroyID(name string) error {
 
 func (s *RedisStateManagement) SetState(name string, state WindowState) error {
 	id := s.GetID(name)
-	fmt.Println("setting state: ", id, strconv.Itoa(int(state)))
+	log.Println("setting state: ", id, strconv.Itoa(int(state)))
 	return s.client.HSet(s.ctx, "state", id, strconv.Itoa(int(state))).Err()
 }
 

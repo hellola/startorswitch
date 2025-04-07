@@ -2,7 +2,6 @@ package config
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -25,14 +24,14 @@ func DefaultConfig() *Config {
 // LoadConfig loads configuration from a file
 func LoadConfig() (*Config, error) {
 	homeDir, err := os.UserHomeDir()
-	fmt.Println("loading config.. ", homeDir)
+	log.Println("loading config.. ", homeDir)
 	if err != nil {
-		fmt.Println("Using default config!")
+		log.Println("Using default config!")
 		return DefaultConfig(), nil
 	}
 
 	configPath := filepath.Join(homeDir, ".config", "startorswitch", "config.json")
-	fmt.Println("config path: ", configPath)
+	log.Println("config path: ", configPath)
 	data, err := os.ReadFile(configPath)
 	if err != nil {
 		log.Printf("error reading config:  %s", err.Error())
